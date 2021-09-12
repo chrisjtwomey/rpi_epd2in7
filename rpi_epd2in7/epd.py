@@ -205,8 +205,15 @@ class EPD(object):
 
     def wait_until_idle(self):
         """ Wait until screen is idle by polling the busy pin """
-        while(self.digital_read(BUSY_PIN) == 0):      # 0: busy, 1: idle
-            self.delay_ms(50)
+        #self.send_command(0x71)
+        iter = 0
+        while(self.digital_read(BUSY_PIN) == 0):
+            print("w")      # 0: busy, 1: idle
+            if (iter >= 100):
+                self.reset()
+            self.delay_ms(100)
+            iter+=1
+           
 
     def reset(self):
         """ Module reset """
