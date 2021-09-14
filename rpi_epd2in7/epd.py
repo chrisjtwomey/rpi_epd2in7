@@ -31,10 +31,11 @@
 from __future__ import unicode_literals, division, absolute_import
 
 import time
+from PIL.ImageDraw import ImageDraw
 import spidev
 from .lut import LUT, QuickLUT
 import RPi.GPIO as GPIO
-from PIL import ImageChops
+from PIL import ImageChops, ImageDraw
 
 # Pin definition
 RST_PIN         = 17
@@ -97,7 +98,10 @@ def _nearest_mult_of_8(number, up=True):
 
 
 class EPD(object):
-    def __init__(self, partial_refresh_limit=32, fast_refresh=True):
+    ORIENTATION_LANDSCAPE = "h"
+    ORIENTATION_VERTICAL = "v"
+
+    def __init__(self, orientation=ORIENTATION_VERTICAL, partial_refresh_limit=32, fast_refresh=True):
         """ Initialize the EPD class.
         `partial_refresh_limit` - number of partial refreshes before a full refrersh is forced
         `fast_frefresh` - enable or disable the fast refresh mode,
@@ -106,6 +110,14 @@ class EPD(object):
         """ Display width, in pixels """
         self.height = EPD_HEIGHT
         """ Display height, in pixels """
+
+        if orientation == self.ORIENTATION_LANDSCAPE:
+            """ Reverse assignment for horizontal orientation """
+            self.width = EPD_HEIGHT
+            self.height = EPD_WIDTH
+
+        self.orientation = orientation
+
         self.fast_refresh = fast_refresh
         """ enable or disable the fast refresh mode """
         self.partial_refresh_limit = partial_refresh_limit
@@ -251,11 +263,20 @@ class EPD(object):
     def _get_frame_buffer(self, image):
         """ Get a full frame buffer from a PIL Image object """
         image_monocolor = image.convert('1')
-        imwidth, imheight = image_monocolor.size
-        if imwidth != self.width or imheight != self.height:
-            raise ValueError('Image must be same dimensions as display \
-                ({0}x{1}).' .format(self.width, self.height))
-        return self._get_frame_buffer_for_size(image_monocolor, self.height, self.width)
+        if self.orientation == "v":
+            imwidth, imheight = image_monocolor.size
+
+            if imwidth != self.width or imheight != self.height:
+                raise ValueError('Image must be same dimensions as display \
+                    ({0}x{1}).' .format(self.width, self.height))
+            return self._get_frame_buffer_for_size(image_monocolor, self.height, self.width)
+        if self.orientation == "h":
+            imheight, imwidth = image_monocolor.size
+
+            if imwidth != self.width or imheight != self.height:
+                raise ValueError('Image must be same dimensions as display \
+                    ({0}x{1}).' .format(self.width, self.height))
+            return self._get_frame_buffer_for_size(image_monocolor, self.width, self.height)
 
     def _get_frame_buffer_for_size(self, image_monocolor, height, width):
         """ Get a frame buffer object from a PIL Image object assuming a specific size"""
@@ -326,7 +347,7 @@ class EPD(object):
         self.send_command(PARTIAL_DATA_START_TRANSMISSION_1)
         self.delay_ms(2)
 
-        self._send_partial_frame_dimensions(x, y, h, w)
+        self._send_partial_frame_dimensions(x, y, w, h)
         self.delay_ms(2)
 
         # Send the old values, as per spec
@@ -389,18 +410,34 @@ class EPD(object):
                 x = _nearest_mult_of_8(bbox[0], False)
                 y = bbox[1]
                 w = _nearest_mult_of_8(bbox[2] - x)
-                if w > self.width:
-                    w = self.width
                 h = bbox[3] - y
-                if h > self.height:
-                    h = self.height
+
+                if self.orientation == self.ORIENTATION_VERTICAL:
+                    if w > self.width:
+                        w = self.width
+                    if h > self.height:
+                        h = self.height
+                elif self.orientation == self.ORIENTATION_LANDSCAPE:
+                    if w > self.height:
+                        w = self.height
+                    if h > self.width:
+                        h = self.width
+
+                print(x, y, h, w)
+                draw = ImageDraw.Draw(image)
+                draw.rectangle((x, y, w, h), fill=0)
+
                 # now let's figure out if fast mode is an option.
                 # If the area was all white before - fast mode will be used.
                 # otherwise, a slow refresh will be used (to avoid ghosting).
                 # Since the image only has one color, meaning each pixel is either
                 # 0 or 255, the following convinent one liner can be used
                 fast = 0 not in self._last_frame.crop(bbox).getdata() and self.fast_refresh
-                self.display_partial_frame(image, x, y, h, w, fast)
+
+                if self.orientation == self.ORIENTATION_VERTICAL:
+                    self.display_partial_frame(image, x, y, h, w, fast)
+                elif self.orientation == self.ORIENTATION_LANDSCAPE:
+                    self.display_partial_frame(image, x, y, w, h, fast)
 
     def sleep(self):
         """Put the chip into a deep-sleep mode to save power.
